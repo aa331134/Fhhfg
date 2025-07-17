@@ -1,0 +1,208 @@
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>نظام كاشير</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+</head>
+<body class="bg-gray-100 p-4">
+  <div class="max-w-4xl mx-auto">
+    <h1 class="text-3xl font-bold text-center mb-4">🧾 نظام الكاشير بالباركود</h1>
+
+    <div class="bg-white shadow-md rounded-lg p-4 mb-6">
+      <h2 class="text-xl font-semibold mb-2">إضافة منتج جديد</h2>
+      <button id="scanForAddBtn" class="mb-4 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">مسح الباركود بالكاميرا</button>
+      <div id="scannerAdd" class="mb-4 hidden"></div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <input id="prodName" class="border p-2 rounded" type="text" placeholder="اسم المنتج">
+        <input id="prodPrice" class="border p-2 rounded" type="number" step="0.01" placeholder="السعر">
+      </div>
+      <input type="hidden" id="prodBarcode">
+      <button id="addProductBtn" class="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">حفظ المنتج</button>
+    </div>
+
+    <div class="bg-white shadow-md rounded-lg p-4 mb-6">
+      <h2 class="text-xl font-semibold mb-2">الفاتورة</h2>
+      <button id="scanBtn" class="mb-4 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">مسح الباركود بالكاميرا</button>
+      <div id="scanner" class="mb-4 hidden"></div>
+
+      <table class="w-full text-right border">
+        <thead class="bg-gray-200">
+          <tr>
+            <th class="p-2">المنتج</th>
+            <th class="p-2">الكمية</th>
+            <th class="p-2">السعر</th>
+            <th class="p-2">الإجمالي</th>
+            <th class="p-2">حذف</th>
+          </tr>
+        </thead>
+        <tbody id="invoiceBody"></tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4" class="text-left p-2 font-bold">الإجمالي الكلي:</td>
+            <td id="grandTotal" class="p-2 font-bold">0</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <button id="printBtn" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700">طباعة الفاتورة</button>
+    </div>
+  </div>
+
+  <script>
+    const dbKey = 'posProducts';
+    let invoice = [];
+
+    function loadProducts() {
+      return JSON.parse(localStorage.getItem(dbKey)) || {};
+    }
+
+    function saveProduct(barcode, name, price) {
+      const products = loadProducts();
+      products[barcode] = { name, price };
+      localStorage.setItem(dbKey, JSON.stringify(products));
+    }
+
+    function getProduct(barcode) {
+      const products = loadProducts();
+      return products[barcode];
+    }
+
+    document.getElementById('addProductBtn').addEventListener('click', () => {
+      const barcode = document.getElementById('prodBarcode').value.trim();
+      const name = document.getElementById('prodName').value.trim();
+      const price = parseFloat(document.getElementById('prodPrice').value);
+
+      if (!barcode || !name || isNaN(price)) {
+        alert('يرجى إدخال بيانات صحيحة ومسح الباركود أولاً.');
+        return;
+      }
+
+      saveProduct(barcode, name, price);
+      alert('تم حفظ المنتج بنجاح.');
+      document.getElementById('prodBarcode').value = '';
+      document.getElementById('prodName').value = '';
+      document.getElementById('prodPrice').value = '';
+    });
+
+    function addToInvoice(barcode) {
+      const product = getProduct(barcode);
+      if (!product) {
+        alert('المنتج غير موجود!');
+        return;
+      }
+
+      const existing = invoice.find(item => item.barcode === barcode);
+      if (existing) {
+        existing.qty += 1;
+      } else {
+        invoice.push({ barcode, name: product.name, price: product.price, qty: 1 });
+      }
+
+      renderInvoice();
+    }
+
+    function renderInvoice() {
+      const tbody = document.getElementById('invoiceBody');
+      tbody.innerHTML = '';
+      let total = 0;
+
+      invoice.forEach((item, index) => {
+        const row = document.createElement('tr');
+        const itemTotal = item.qty * item.price;
+        total += itemTotal;
+
+        row.innerHTML = `
+          <td class="p-2">${item.name}</td>
+          <td class="p-2">${item.qty}</td>
+          <td class="p-2">${item.price.toFixed(2)}</td>
+          <td class="p-2">${itemTotal.toFixed(2)}</td>
+          <td class="p-2 text-red-600 cursor-pointer hover:underline" onclick="removeItem(${index})">🗑️</td>
+        `;
+
+        tbody.appendChild(row);
+      });
+
+      document.getElementById('grandTotal').innerText = total.toFixed(2);
+    }
+
+    function removeItem(index) {
+      invoice.splice(index, 1);
+      renderInvoice();
+    }
+
+    let scannerVisible = false;
+    const scannerDiv = document.getElementById('scanner');
+    const html5QrCode = new Html5Qrcode("scanner");
+
+    document.getElementById('scanBtn').addEventListener('click', () => {
+      if (!scannerVisible) {
+        scannerDiv.classList.remove('hidden');
+        Html5Qrcode.getCameras().then(devices => {
+          if (devices && devices.length) {
+            html5QrCode.start(
+              { facingMode: "environment" },
+              { fps: 10, qrbox: 250 },
+              (decodedText) => {
+                addToInvoice(decodedText);
+                html5QrCode.stop();
+                scannerDiv.classList.add('hidden');
+                scannerVisible = false;
+              },
+              (error) => {}
+            ).catch(err => {
+              alert("حدث خطأ أثناء فتح الكاميرا.");
+            });
+            scannerVisible = true;
+          }
+        });
+      } else {
+        html5QrCode.stop();
+        scannerDiv.classList.add('hidden');
+        scannerVisible = false;
+      }
+    });
+
+    // كاميرا قسم الإضافة
+    const scannerAddDiv = document.getElementById('scannerAdd');
+    const addScanner = new Html5Qrcode("scannerAdd");
+    let scannerAddVisible = false;
+
+    document.getElementById('scanForAddBtn').addEventListener('click', () => {
+      if (!scannerAddVisible) {
+        scannerAddDiv.classList.remove('hidden');
+        Html5Qrcode.getCameras().then(devices => {
+          if (devices && devices.length) {
+            addScanner.start(
+              { facingMode: "environment" },
+              { fps: 10, qrbox: 250 },
+              (decodedText) => {
+                document.getElementById('prodBarcode').value = decodedText;
+                addScanner.stop();
+                scannerAddDiv.classList.add('hidden');
+                scannerAddVisible = false;
+                alert('تم مسح الباركود بنجاح!');
+              },
+              (error) => {}
+            ).catch(err => {
+              alert("حدث خطأ أثناء فتح الكاميرا.");
+            });
+            scannerAddVisible = true;
+          }
+        });
+      } else {
+        addScanner.stop();
+        scannerAddDiv.classList.add('hidden');
+        scannerAddVisible = false;
+      }
+    });
+
+    document.getElementById('printBtn').addEventListener('click', () => {
+      window.print();
+    });
+  </script>
+</body>
+</html>
